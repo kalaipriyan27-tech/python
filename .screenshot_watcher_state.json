@@ -1,0 +1,18 @@
+{
+  "processed": {
+    "D:\\Games\\screenshot_20260315_143526.png": {
+      "size": 293968,
+      "mtime_ns": 1773565526798848500,
+      "model": "nvidia/nemotron-nano-12b-v2-vl:free",
+      "updated_at": "2026-03-15T09:19:29.724188Z",
+      "skipped_existing": true
+    },
+    "D:\\Games\\screenshot_20260315_145018.png": {
+      "size": 335153,
+      "mtime_ns": 1773566418179990700,
+      "model": "openrouter/free",
+      "updated_at": "2026-03-15T09:31:16.701270Z",
+      "skipped_existing": true
+    }
+  }
+}
