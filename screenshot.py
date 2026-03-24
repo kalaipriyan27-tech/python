@@ -6,6 +6,7 @@ import datetime
 import json
 import os
 import subprocess
+import threading
 import time
 import re
 import pyperclip
@@ -26,6 +27,10 @@ DEFAULT_OPENROUTER_MAX_TOKENS = 600
 OPENROUTER_RESPONSE_FILE = SCRIPT_DIR / "openrouter_response.txt"
 DEFAULT_VOICE_RATE = 1
 DEFAULT_VOICE_VOLUME = 100
+HOTKEY_POLL_INTERVAL = 0.05
+LISTEN_TIMEOUT_SECONDS = 1
+VK_F10 = 0x79
+VK_F12 = 0x7B
 OPENROUTER_SYSTEM_PROMPT = (
     "you are the Java developer or a trainer who helps the students learning "
     "the Java programming.Here your role is to just provide the code that "
@@ -39,6 +44,9 @@ API_KEY_ENV_NAMES = (
     "OPENROUTER_APIKEY",
     "OPENAI_API_KEY",
 )
+HOTKEY_USER32 = ctypes.WinDLL("user32", use_last_error=True)
+HOTKEY_USER32.GetAsyncKeyState.argtypes = [wintypes.INT]
+HOTKEY_USER32.GetAsyncKeyState.restype = wintypes.SHORT
 
 
 def voice_feedback_enabled():
@@ -103,6 +111,36 @@ def speak_status(message):
 def announce_status(print_message, spoken_message=None):
     print(print_message)
     speak_status(spoken_message or print_message)
+
+
+def is_virtual_key_down(vk_code):
+    return bool(HOTKEY_USER32.GetAsyncKeyState(vk_code) & 0x8000)
+
+
+def hotkey_monitor(paused_event, stop_event):
+    pause_was_down = False
+    stop_was_down = False
+
+    while not stop_event.is_set():
+        pause_down = is_virtual_key_down(VK_F10)
+        stop_down = is_virtual_key_down(VK_F12)
+
+        if pause_down and not pause_was_down:
+            if paused_event.is_set():
+                paused_event.clear()
+                announce_status("Listening resumed via F10.", "Listening resumed.")
+            else:
+                paused_event.set()
+                announce_status("Listening paused via F10.", "Listening paused.")
+
+        if stop_down and not stop_was_down:
+            announce_status("Kill hotkey F12 pressed. Stopping.", "Stopping.")
+            stop_event.set()
+            return
+
+        pause_was_down = pause_down
+        stop_was_down = stop_down
+        time.sleep(HOTKEY_POLL_INTERVAL)
 
 
 def normalize_text(text):
@@ -642,16 +680,35 @@ def main():
 
     recognizer = sr.Recognizer()
     mic = sr.Microphone()
+    paused_event = threading.Event()
+    stop_event = threading.Event()
+    threading.Thread(
+        target=hotkey_monitor,
+        args=(paused_event, stop_event),
+        daemon=True,
+    ).start()
+
+    with mic as source:
+        recognizer.adjust_for_ambient_noise(source, duration=0.5)
 
     announce_status(
-        "Listening for the words 'hello', 'copy', 'write', 'liar', 'get', 'key', and 'stop'...",
+        (
+            "Listening for the words 'hello', 'copy', 'write', 'liar', 'get', 'key', and 'stop'... "
+            "Press F10 to pause or resume, and F12 to stop."
+        ),
         "Voice assistant is ready.",
     )
 
-    while True:
+    while not stop_event.is_set():
+        if paused_event.is_set():
+            time.sleep(0.1)
+            continue
+
         with mic as source:
-            recognizer.adjust_for_ambient_noise(source)
-            audio = recognizer.listen(source)
+            try:
+                audio = recognizer.listen(source, timeout=LISTEN_TIMEOUT_SECONDS)
+            except sr.WaitTimeoutError:
+                continue
 
         try:
             text = recognizer.recognize_google(audio)
@@ -662,6 +719,7 @@ def main():
 
             if command == "stop":
                 announce_status("Stopping.", "Stopping.")
+                stop_event.set()
                 break
 
             if command == "shot":
@@ -725,6 +783,8 @@ def main():
 
         except sr.RequestError:
             print("Speech service error")
+
+    stop_event.set()
 
 
 if __name__ == "__main__":

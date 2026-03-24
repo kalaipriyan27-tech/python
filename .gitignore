@@ -1,0 +1,17 @@
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Local secrets/config
+.env
+.env.local
+
+# Generated app output
+.screenshot_watcher_state.json
+openrouter_response.txt
+screenshots/
+screenshot_*.png
+*.log
+
+# Java/compiled output
+*.class
