@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Copy Event Detector</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 800px;
+      margin: 40px auto;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+    h1 { color: #333; }
+    .box {
+      background: white;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      padding: 20px;
+      margin: 20px 0;
+    }
+    .box h2 { margin-top: 0; color: #555; font-size: 1rem; }
+    p, input, textarea {
+      font-size: 1rem;
+    }
+    input, textarea {
+      width: 100%;
+      padding: 8px;
+      box-sizing: border-box;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      margin-top: 6px;
+    }
+    #log {
+      background: #1e1e1e;
+      color: #00ff99;
+      font-family: monospace;
+      font-size: 0.85rem;
+      padding: 16px;
+      border-radius: 8px;
+      height: 200px;
+      overflow-y: auto;
+    }
+    #log .entry { margin: 4px 0; }
+    #log .time { color: #888; }
+    #clear-btn {
+      margin-top: 10px;
+      padding: 8px 16px;
+      background: #e55;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    #clear-btn:hover { background: #c33; }
+    .badge {
+      display: inline-block;
+      background: #4caf50;
+      color: white;
+      border-radius: 12px;
+      padding: 2px 10px;
+      font-size: 0.75rem;
+      margin-left: 8px;
+      vertical-align: middle;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>📋 Copy Event Detector</h1>
+  <p>Try copying text from any of the areas below (or anywhere on the page). All copy events will be logged to the console and shown here.</p>
+
+  <div class="box">
+    <h2>📝 Paragraph — select and copy some text</h2>
+    <p id="para-text">The quick brown fox jumps over the lazy dog. This is a sample paragraph to test copy detection. Select any part of this text and press Ctrl+C (or Cmd+C).</p>
+  </div>
+
+  <div class="box">
+    <h2>🔤 Input Field</h2>
+    <input type="text" id="input-field" value="Copy this input field text!">
+  </div>
+
+  <div class="box">
+    <h2>🗒️ Textarea</h2>
+    <textarea id="textarea-field" rows="3">This is a textarea.
+You can copy text from here too.
+Try selecting multiple lines!</textarea>
+  </div>
+
+  <div class="box">
+    <h2>🖥️ Console Log <span class="badge" id="count-badge">0 events</span></h2>
+    <div id="log"><div style="color:#666">// Waiting for copy events...</div></div>
+    <button id="clear-btn">Clear Log</button>
+  </div>
+
+  <script>
+    let copyCount = 0;
+    const logEl = document.getElementById('log');
+    const badge = document.getElementById('count-badge');
+
+    function getSourceDescription(target) {
+      if (!target) return 'Unknown';
+      if (target.id) return `#${target.id} (${target.tagName})`;
+      if (target.tagName) return target.tagName;
+      return 'Unknown';
+    }
+
+    function logCopyEvent(e) {
+      copyCount++;
+
+      const selectedText = window.getSelection()?.toString() || '';
+      const source = getSourceDescription(e.target);
+      const time = new Date().toLocaleTimeString();
+      const preview = selectedText.length > 40
+        ? selectedText.slice(0, 40) + '...'
+        : selectedText || '(no text selected)';
+
+      // 1. Print to actual browser console
+      console.group(`📋 Copy Event #${copyCount}`);
+      console.log('Time       :', time);
+      console.log('Source     :', source);
+      console.log('Selected   :', selectedText || '(empty)');
+      console.log('Event obj  :', e);
+      console.groupEnd();
+
+      // 2. Show in on-page log
+      const entry = document.createElement('div');
+      entry.className = 'entry';
+      entry.innerHTML =
+        `<span class="time">[${time}]</span> ` +
+        `<strong>#${copyCount}</strong> — ` +
+        `Source: <em>${source}</em> | ` +
+        `Copied: "<span style="color:#ffd700">${escapeHtml(preview)}</span>"`;
+      logEl.appendChild(entry);
+      logEl.scrollTop = logEl.scrollHeight;
+
+      badge.textContent = `${copyCount} event${copyCount !== 1 ? 's' : ''}`;
+    }
+
+    function escapeHtml(str) {
+      return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    // Listen on the entire document — catches ALL copy events
+    document.addEventListener('copy', logCopyEvent);
+
+    document.getElementById('clear-btn').addEventListener('click', () => {
+      logEl.innerHTML = '<div style="color:#666">// Log cleared. Waiting for copy events...</div>';
+      copyCount = 0;
+      badge.textContent = '0 events';
+      console.clear();
+      console.log('🧹 Log cleared.');
+    });
+  </script>
+</body>
+</html>

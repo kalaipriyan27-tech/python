@@ -1,9 +1,11 @@
+import base64
 import ctypes
 import speech_recognition as sr
 import pyautogui
 import datetime
 import json
 import os
+import subprocess
 import time
 import re
 import pyperclip
@@ -22,6 +24,8 @@ DEFAULT_OPENROUTER_MODEL = "openrouter/free"
 DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_OPENROUTER_MAX_TOKENS = 600
 OPENROUTER_RESPONSE_FILE = SCRIPT_DIR / "openrouter_response.txt"
+DEFAULT_VOICE_RATE = 1
+DEFAULT_VOICE_VOLUME = 100
 OPENROUTER_SYSTEM_PROMPT = (
     "you are the Java developer or a trainer who helps the students learning "
     "the Java programming.Here your role is to just provide the code that "
@@ -35,6 +39,70 @@ API_KEY_ENV_NAMES = (
     "OPENROUTER_APIKEY",
     "OPENAI_API_KEY",
 )
+
+
+def voice_feedback_enabled():
+    value = os.getenv("SCREENSHOT_VOICE_ENABLED", "1").strip().lower()
+    return value not in {"0", "false", "no", "off"}
+
+
+def get_voice_rate():
+    raw_value = os.getenv("SCREENSHOT_VOICE_RATE")
+    if not raw_value:
+        return DEFAULT_VOICE_RATE
+
+    try:
+        return max(-10, min(10, int(raw_value)))
+    except ValueError:
+        return DEFAULT_VOICE_RATE
+
+
+def get_voice_volume():
+    raw_value = os.getenv("SCREENSHOT_VOICE_VOLUME")
+    if not raw_value:
+        return DEFAULT_VOICE_VOLUME
+
+    try:
+        return max(0, min(100, int(raw_value)))
+    except ValueError:
+        return DEFAULT_VOICE_VOLUME
+
+
+def speak_status(message):
+    if not voice_feedback_enabled() or not message:
+        return
+
+    script = (
+        "Add-Type -AssemblyName System.Speech\n"
+        "$voice = New-Object System.Speech.Synthesis.SpeechSynthesizer\n"
+        "$femaleVoice = $voice.GetInstalledVoices() | "
+        "ForEach-Object { $_.VoiceInfo } | "
+        "Where-Object { $_.Gender -eq 'Female' } | "
+        "Select-Object -First 1\n"
+        "if ($femaleVoice) { $voice.SelectVoice($femaleVoice.Name) }\n"
+        f"$voice.Rate = {get_voice_rate()}\n"
+        f"$voice.Volume = {get_voice_volume()}\n"
+        "$voice.Speak($env:SCREENSHOT_SPEAK_TEXT)\n"
+    )
+    encoded_script = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+    env = os.environ.copy()
+    env["SCREENSHOT_SPEAK_TEXT"] = message
+
+    try:
+        subprocess.Popen(
+            ["powershell", "-NoProfile", "-EncodedCommand", encoded_script],
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except Exception:
+        pass
+
+
+def announce_status(print_message, spoken_message=None):
+    print(print_message)
+    speak_status(spoken_message or print_message)
 
 
 def normalize_text(text):
@@ -448,10 +516,13 @@ def load_openrouter_response_text():
 def process_clipboard_with_openrouter():
     clipboard_text = get_clipboard_text()
     if not clipboard_text:
-        print("Clipboard is empty.")
+        announce_status("Clipboard is empty.", "Clipboard is empty.")
         return
 
-    print("Sending clipboard text to OpenRouter...")
+    announce_status(
+        "Sending clipboard text to OpenRouter...",
+        "Sending clipboard text to the language model.",
+    )
     response_payload = send_openrouter_text_request(clipboard_text)
     response_text = extract_output_text(response_payload)
     if not response_text:
@@ -459,25 +530,27 @@ def process_clipboard_with_openrouter():
         raise RuntimeError(f"OpenRouter response did not contain text: {summary}")
 
     save_openrouter_response_text(response_text)
-    print("OpenRouter response saved to:", OPENROUTER_RESPONSE_FILE)
+    announce_status(
+        f"OpenRouter response saved to: {OPENROUTER_RESPONSE_FILE}",
+        "Language model response saved to file.",
+    )
 
 
 def type_saved_openrouter_response():
     stored_text = load_openrouter_response_text()
     if not stored_text:
-        print("No saved OpenRouter response found.")
+        announce_status("No saved OpenRouter response found.", "No saved response found.")
         return
 
-    print("Typing saved OpenRouter response...")
-    write_clipboard_text(stored_text)
+    write_clipboard_text(stored_text, spoken_label="saved response")
 
 
 def type_text_like_human(text, delay=WRITE_DELAY):
     if not text:
-        print("Clipboard is empty.")
+        announce_status("Clipboard is empty.", "Clipboard is empty.")
         return
 
-    print("Typing clipboard text...")
+    announce_status("Typing clipboard text...", "Typing clipboard text.")
 
     index = 0
     while index < len(text):
@@ -500,7 +573,7 @@ def type_text_like_human(text, delay=WRITE_DELAY):
 
         index += 1
 
-    print("Finished typing clipboard text.")
+    announce_status("Finished typing clipboard text.", "Finished typing clipboard text.")
 
 
 def type_line_like_human(text, delay=WRITE_DELAY):
@@ -530,12 +603,15 @@ def clear_auto_indent(delay=WRITE_DELAY):
     time.sleep(delay)
 
 
-def write_clipboard_text(text, delay=WRITE_DELAY):
+def write_clipboard_text(text, delay=WRITE_DELAY, spoken_label="clipboard text"):
     if not text:
-        print("Clipboard is empty.")
+        announce_status("Clipboard is empty.", "Clipboard is empty.")
         return
 
-    print("Typing clipboard text exactly...")
+    announce_status(
+        f"Typing {spoken_label} exactly...",
+        f"Typing {spoken_label}.",
+    )
 
     normalized_text = text.replace("\r\n", "\n").replace("\r", "\n")
     lines = normalized_text.split("\n")
@@ -548,14 +624,17 @@ def write_clipboard_text(text, delay=WRITE_DELAY):
         clear_auto_indent(delay=delay)
         type_line_like_human(line, delay=delay)
 
-    print("Finished typing clipboard text.")
+    announce_status(
+        f"Finished typing {spoken_label}.",
+        f"Finished typing {spoken_label}.",
+    )
 
 
 def save_screenshot():
     filename = "screenshot_" + datetime.datetime.now().strftime("%Y%m%d_%H%M%S") + ".png"
     screenshot = pyautogui.screenshot()
     screenshot.save(filename)
-    print("Screenshot saved:", filename)
+    announce_status(f"Screenshot saved: {filename}", "Screenshot saved.")
 
 
 def main():
@@ -564,7 +643,10 @@ def main():
     recognizer = sr.Recognizer()
     mic = sr.Microphone()
 
-    print("Listening for the words 'hello', 'copy', 'write', 'liar', 'get', 'key', and 'stop'...")
+    announce_status(
+        "Listening for the words 'hello', 'copy', 'write', 'liar', 'get', 'key', and 'stop'...",
+        "Voice assistant is ready.",
+    )
 
     while True:
         with mic as source:
@@ -579,14 +661,14 @@ def main():
             print("You said:", normalized_text)
 
             if command == "stop":
-                print("Stopping.")
+                announce_status("Stopping.", "Stopping.")
                 break
 
             if command == "shot":
                 try:
                     save_screenshot()
                 except pyautogui.FailSafeException:
-                    print("PyAutoGUI safety stop triggered.")
+                    announce_status("PyAutoGUI safety stop triggered.", "Safety stop triggered.")
                     print("Move your mouse away from the screen corners and try again.")
 
             if command == "copy":
@@ -599,11 +681,14 @@ def main():
                     print("Selected text:", selected_text)
                     try:
                         pyperclip.copy(selected_text)
-                        print("Copied to clipboard!")
+                        announce_status("Copied to clipboard!", "Selected text copied to clipboard.")
                     except Exception:
-                        print("Failed to copy to clipboard")
+                        announce_status("Failed to copy to clipboard", "Failed to copy to clipboard.")
                 else:
-                    print("No accessible selected text was found in:", window.window_text())
+                    announce_status(
+                        f"No accessible selected text was found in: {window.window_text()}",
+                        "No selected text was found.",
+                    )
                     print("Clipboard fallback is disabled to avoid triggering webpage copy events.")
 
             if command == "write":
@@ -611,9 +696,9 @@ def main():
                 print(f"DEBUG - Clipboard LEN: {len(clipboard_text)}, repr: {repr(clipboard_text)}")
                 print(f"DEBUG - Clipboard: '{clipboard_text[:50]}...'" if len(clipboard_text) > 50 else f"DEBUG - Clipboard: '{clipboard_text}'")
                 try:
-                    write_clipboard_text(clipboard_text)
+                    write_clipboard_text(clipboard_text, spoken_label="clipboard text")
                 except pyautogui.FailSafeException:
-                    print("PyAutoGUI safety stop triggered.")
+                    announce_status("PyAutoGUI safety stop triggered.", "Safety stop triggered.")
                     print("Move your mouse away from the screen corners and try again.")
 
             if command == "go":
@@ -626,7 +711,7 @@ def main():
                 try:
                     type_saved_openrouter_response()
                 except pyautogui.FailSafeException:
-                    print("PyAutoGUI safety stop triggered.")
+                    announce_status("PyAutoGUI safety stop triggered.", "Safety stop triggered.")
                     print("Move your mouse away from the screen corners and try again.")
 
             if command == "key":
